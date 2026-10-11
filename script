@@ -23,7 +23,9 @@ local settings = {
     Fly = false,
     FlySpeed = 50,
     SpeedHack = false,
-    WalkSpeed = 32
+    WalkSpeed = 32,
+    JumpPowerHack = false, -- NEW: Jump Power Toggle
+    JumpPower = 100 -- NEW: Jump Power Value
 }
 
 local espObjects = {}
@@ -185,6 +187,53 @@ local function stopSpeedHack()
         local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
         if humanoid then
             humanoid.WalkSpeed = 16
+        end
+    end
+end
+
+-- JUMP POWER INTEGRATION
+local jumpConnection = nil
+
+local function updateJumpPower()
+    if player.Character then
+        local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid.UseJumpPower = true
+            if settings.JumpPowerHack then
+                humanoid.JumpPower = settings.JumpPower
+            else
+                humanoid.JumpPower = 50
+            end
+        end
+    end
+end
+
+local function startJumpPower()
+    updateJumpPower()
+    if jumpConnection then jumpConnection:Disconnect() end
+    jumpConnection = RunService.RenderStepped:Connect(function()
+        if settings.JumpPowerHack and player.Character then
+            local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.UseJumpPower = true
+                if humanoid.JumpPower ~= settings.JumpPower then
+                    humanoid.JumpPower = settings.JumpPower
+                end
+            end
+        end
+    end)
+end
+
+local function stopJumpPower()
+    if jumpConnection then
+        jumpConnection:Disconnect()
+        jumpConnection = nil
+    end
+    if player.Character then
+        local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid.UseJumpPower = true
+            humanoid.JumpPower = 50
         end
     end
 end
@@ -532,6 +581,7 @@ local function destroyGUI()
     stopNoclip()
     stopFly()
     stopSpeedHack()
+    stopJumpPower()
 
     for target in pairs(espObjects) do
         removeESP(target)
@@ -803,7 +853,7 @@ local function addESP(target)
             distLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
             distLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
             distLabel.TextStrokeTransparency = 0
-            distLabel.TextSize = 10 -- Smaller size for studs
+            distLabel.TextSize = 10
             distLabel.Font = Enum.Font.Gotham
             distLabel.Visible = settings.Distance
             distLabel.LayoutOrder = 2
@@ -1105,6 +1155,20 @@ end)
 createSpeedInput(movementsPage, "WalkSpeed Value", "Set walk speed value (Default: 16)", "WalkSpeed", 5, function()
     if settings.SpeedHack then
         updateWalkSpeed()
+    end
+end)
+
+createSetting(movementsPage, "Jump Power", "Increase character jump power", "JumpPowerHack", 6, function(enabled)
+    if enabled then
+        startJumpPower()
+    else
+        stopJumpPower()
+    end
+end)
+
+createSpeedInput(movementsPage, "JumpPower Value", "Set jump power value (Default: 50)", "JumpPower", 7, function()
+    if settings.JumpPowerHack then
+        updateJumpPower()
     end
 end)
 
