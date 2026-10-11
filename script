@@ -13,6 +13,7 @@ if oldGui then oldGui:Destroy() end
 local settings = {
     Enabled = false,
     Names = true,
+    Distance = true,
     Highlights = true,
     Fill = true,
     Outline = true,
@@ -516,6 +517,9 @@ local function removeESP(target)
         if objects.nameTag then
             objects.nameTag:Destroy()
         end
+        if objects.connection then
+            objects.connection:Disconnect()
+        end
         espObjects[target] = nil
     end
 end
@@ -732,9 +736,11 @@ local function addESP(target)
             current.highlight.OutlineColor = settings.OutlineColor
         end
         if current.nameTag then
-            current.nameTag.Enabled = settings.Names
+            current.nameTag.Enabled = settings.Names or settings.Distance
+            if current.nameLabel then current.nameLabel.Visible = settings.Names end
+            if current.distLabel then current.distLabel.Visible = settings.Distance end
         end
-        if (settings.Names and not current.nameTag)
+        if ((settings.Names or settings.Distance) and not current.nameTag)
             or (settings.Highlights and not current.highlight) then
             removeESP(target)
         else
@@ -759,29 +765,71 @@ local function addESP(target)
         objects.highlight = highlight
     end
 
-    if settings.Names then
+    if settings.Names or settings.Distance then
         local head = character:FindFirstChild("Head")
         if head then
             local tag = Instance.new("BillboardGui")
             tag.Name = "ESPName"
             tag.Adornee = head
-            tag.Size = UDim2.fromOffset(200, 32)
+            tag.Size = UDim2.fromOffset(200, 50)
             tag.StudsOffset = Vector3.new(0, 2.5, 0)
             tag.AlwaysOnTop = true
             tag.Parent = screenGui
 
-            local label = Instance.new("TextLabel")
-            label.Size = UDim2.fromScale(1, 1)
-            label.BackgroundTransparency = 1
-            label.Text = target.DisplayName .. " (@" .. target.Name .. ")"
-            label.TextColor3 = Color3.new(1, 1, 1)
-            label.TextStrokeColor3 = Color3.new(0, 0, 0)
-            label.TextStrokeTransparency = 0
-            label.TextScaled = true
-            label.Font = Enum.Font.GothamBold
-            label.Parent = tag
+            local uiList = Instance.new("UIListLayout")
+            uiList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+            uiList.SortOrder = Enum.SortOrder.LayoutOrder
+            uiList.Padding = UDim.new(0, 2)
+            uiList.Parent = tag
+
+            local nameLabel = Instance.new("TextLabel")
+            nameLabel.Name = "NameLabel"
+            nameLabel.Size = UDim2.new(1, 0, 0, 22)
+            nameLabel.BackgroundTransparency = 1
+            nameLabel.Text = target.DisplayName .. " (@" .. target.Name .. ")"
+            nameLabel.TextColor3 = Color3.new(1, 1, 1)
+            nameLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+            nameLabel.TextStrokeTransparency = 0
+            nameLabel.TextSize = 13
+            nameLabel.Font = Enum.Font.GothamBold
+            nameLabel.Visible = settings.Names
+            nameLabel.LayoutOrder = 1
+            nameLabel.Parent = tag
+
+            local distLabel = Instance.new("TextLabel")
+            distLabel.Name = "DistLabel"
+            distLabel.Size = UDim2.new(1, 0, 0, 16)
+            distLabel.BackgroundTransparency = 1
+            distLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+            distLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+            distLabel.TextStrokeTransparency = 0
+            distLabel.TextSize = 10 -- Smaller size for studs
+            distLabel.Font = Enum.Font.Gotham
+            distLabel.Visible = settings.Distance
+            distLabel.LayoutOrder = 2
+            distLabel.Parent = tag
 
             objects.nameTag = tag
+            objects.nameLabel = nameLabel
+            objects.distLabel = distLabel
+
+            -- Real-time distance updates
+            objects.connection = RunService.RenderStepped:Connect(function()
+                if destroyed or not target.Character then return end
+                
+                nameLabel.Visible = settings.Names
+                distLabel.Visible = settings.Distance
+                tag.Enabled = settings.Names or settings.Distance
+
+                local localChar = player.Character
+                local localRoot = localChar and localChar:FindFirstChild("HumanoidRootPart")
+                local targetRoot = target.Character:FindFirstChild("HumanoidRootPart")
+
+                if settings.Distance and localRoot and targetRoot then
+                    local distance = math.floor((localRoot.Position - targetRoot.Position).Magnitude + 0.5)
+                    distLabel.Text = "[" .. distance .. " studs]"
+                end
+            end)
         end
     end
 
@@ -1062,11 +1110,12 @@ end)
 
 -- POPULATE CONFIG TAB
 createSetting(configPage, "Player Names", "Show names above players", "Names", 1)
-createSetting(configPage, "Player Highlight", "Highlight characters through walls", "Highlights", 2)
-createSetting(configPage, "Highlight Fill", "Show the inside of highlights", "Fill", 3)
-createSetting(configPage, "Highlight Outline", "Show the outline of highlights", "Outline", 4)
-createColorPicker("Fill Color", "Choose highlight fill color", "FillColor", 5)
-createColorPicker("Outline Color", "Choose highlight outline color", "OutlineColor", 6)
+createSetting(configPage, "Player Distance", "Show distance in studs above players", "Distance", 2)
+createSetting(configPage, "Player Highlight", "Highlight characters through walls", "Highlights", 3)
+createSetting(configPage, "Highlight Fill", "Show the inside of highlights", "Fill", 4)
+createSetting(configPage, "Highlight Outline", "Show the outline of highlights", "Outline", 5)
+createColorPicker("Fill Color", "Choose highlight fill color", "FillColor", 6)
+createColorPicker("Outline Color", "Choose highlight outline color", "OutlineColor", 7)
 
 movementsLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     movementsPage.CanvasSize = UDim2.new(0, 0, 0, movementsLayout.AbsoluteContentSize.Y + 8)
