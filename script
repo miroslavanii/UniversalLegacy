@@ -18,7 +18,11 @@ local settings = {
     Outline = true,
     FillColor = Color3.fromRGB(255, 255, 255),
     OutlineColor = Color3.fromRGB(255, 255, 255),
-    Noclip = false
+    Noclip = false,
+    Fly = false,
+    FlySpeed = 50,
+    SpeedHack = false,
+    WalkSpeed = 32
 }
 
 local espObjects = {}
@@ -40,36 +44,146 @@ local function tween(obj, duration, style, direction, props)
     return tw
 end
 
--- R6 & R15 COMPATIBLE NOCLIP
-local NoclipConnection = nil
+-- NOCLIP INTEGRATION
+local noclipEnabled = false
+local noclipConnection = nil
 
 local function startNoclip()
-    if NoclipConnection then NoclipConnection:Disconnect() end
-    
-    local function Nocl()
-        if settings.Noclip and player.Character then
-            for _, v in pairs(player.Character:GetDescendants()) do
-                if v:IsA('BasePart') and v.CanCollide then
-                    v.CanCollide = false
+    noclipEnabled = true
+    if noclipConnection then noclipConnection:Disconnect() end
+    noclipConnection = RunService.Stepped:Connect(function()
+        if player.Character then
+            for _, part in pairs(player.Character:GetDescendants()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
                 end
             end
         end
-    end
-    
-    NoclipConnection = RunService.Stepped:Connect(Nocl)
+    end)
 end
 
 local function stopNoclip()
-    if NoclipConnection then 
-        NoclipConnection:Disconnect() 
-        NoclipConnection = nil
+    noclipEnabled = false
+    if noclipConnection then
+        noclipConnection:Disconnect()
+        noclipConnection = nil
     end
-    
     if player.Character then
-        for _, v in pairs(player.Character:GetDescendants()) do
-            if v:IsA('BasePart') then
-                v.CanCollide = true
+        for _, part in pairs(player.Character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = true
             end
+        end
+    end
+end
+
+-- FLY INTEGRATION
+local flyConnection = nil
+local bodyGyro, bodyVelocity
+
+local function startFly()
+    local character = player.Character
+    if not character then return end
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoidRootPart or not humanoid then return end
+
+    humanoid.PlatformStand = true
+
+    bodyGyro = Instance.new("BodyGyro")
+    bodyGyro.P = 9e4
+    bodyGyro.MaxTorque = Vector3.new(9e4, 9e4, 9e4)
+    bodyGyro.CFrame = humanoidRootPart.CFrame
+    bodyGyro.Parent = humanoidRootPart
+
+    bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+    bodyVelocity.MaxForce = Vector3.new(9e4, 9e4, 9e4)
+    bodyVelocity.Parent = humanoidRootPart
+
+    flyConnection = RunService.RenderStepped:Connect(function()
+        if not settings.Fly or not player.Character then return end
+        local cam = workspace.CurrentCamera
+        local moveDir = Vector3.new(0, 0, 0)
+
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+            moveDir = moveDir + cam.CFrame.LookVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+            moveDir = moveDir - cam.CFrame.LookVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+            moveDir = moveDir - cam.CFrame.RightVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+            moveDir = moveDir + cam.CFrame.RightVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+            moveDir = moveDir + Vector3.new(0, 1, 0)
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+            moveDir = moveDir - Vector3.new(0, 1, 0)
+        end
+
+        bodyVelocity.Velocity = moveDir * settings.FlySpeed
+        bodyGyro.CFrame = cam.CFrame
+    end)
+end
+
+local function stopFly()
+    if flyConnection then
+        flyConnection:Disconnect()
+        flyConnection = nil
+    end
+    if bodyGyro then bodyGyro:Destroy() bodyGyro = nil end
+    if bodyVelocity then bodyVelocity:Destroy() bodyVelocity = nil end
+
+    if player.Character then
+        local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid.PlatformStand = false
+        end
+    end
+end
+
+-- WALKSPEED INTEGRATION
+local speedConnection = nil
+
+local function updateWalkSpeed()
+    if player.Character then
+        local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            if settings.SpeedHack then
+                humanoid.WalkSpeed = settings.WalkSpeed
+            else
+                humanoid.WalkSpeed = 16
+            end
+        end
+    end
+end
+
+local function startSpeedHack()
+    updateWalkSpeed()
+    if speedConnection then speedConnection:Disconnect() end
+    speedConnection = RunService.RenderStepped:Connect(function()
+        if settings.SpeedHack and player.Character then
+            local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.WalkSpeed ~= settings.WalkSpeed then
+                humanoid.WalkSpeed = settings.WalkSpeed
+            end
+        end
+    end)
+end
+
+local function stopSpeedHack()
+    if speedConnection then
+        speedConnection:Disconnect()
+        speedConnection = nil
+    end
+    if player.Character then
+        local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid.WalkSpeed = 16
         end
     end
 end
@@ -81,6 +195,119 @@ screenGui.ResetOnSpawn = false
 screenGui.DisplayOrder = 999999
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
 screenGui.Parent = playerGui
+
+-- TOP LEFT FPS COUNTER BOX (MOVABLE)
+local fpsFrame = Instance.new("Frame")
+fpsFrame.Name = "FPSBox"
+fpsFrame.Size = UDim2.fromOffset(85, 30)
+fpsFrame.Position = UDim2.fromOffset(15, 15)
+fpsFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+fpsFrame.BackgroundTransparency = 0.2
+fpsFrame.BorderSizePixel = 0
+fpsFrame.Active = true
+fpsFrame.Parent = screenGui
+
+Instance.new("UICorner", fpsFrame).CornerRadius = UDim.new(0, 8)
+
+local fpsStroke = Instance.new("UIStroke")
+fpsStroke.Color = Color3.fromRGB(45, 45, 45)
+fpsStroke.Thickness = 1
+fpsStroke.Parent = fpsFrame
+
+local fpsLabel = Instance.new("TextLabel")
+fpsLabel.Name = "FPSText"
+fpsLabel.Size = UDim2.fromScale(1, 1)
+fpsLabel.BackgroundTransparency = 1
+fpsLabel.Text = "FPS: 60"
+fpsLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+fpsLabel.TextSize = 12
+fpsLabel.Font = Enum.Font.GothamBold
+fpsLabel.Parent = fpsFrame
+
+local frameCount = 0
+local lastUpdate = os.clock()
+
+RunService.RenderStepped:Connect(function()
+    frameCount = frameCount + 1
+    local now = os.clock()
+    if now - lastUpdate >= 1 then
+        local fps = math.floor(frameCount / (now - lastUpdate))
+        fpsLabel.Text = "FPS: " .. tostring(fps)
+        frameCount = 0
+        lastUpdate = now
+    end
+end)
+
+-- PING BOX (MOVABLE, PLACED BELOW FPS)
+local pingFrame = Instance.new("Frame")
+pingFrame.Name = "PingBox"
+pingFrame.Size = UDim2.fromOffset(85, 30)
+pingFrame.Position = UDim2.fromOffset(15, 52)
+pingFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+pingFrame.BackgroundTransparency = 0.2
+pingFrame.BorderSizePixel = 0
+pingFrame.Active = true
+pingFrame.Parent = screenGui
+
+Instance.new("UICorner", pingFrame).CornerRadius = UDim.new(0, 8)
+
+local pingStroke = Instance.new("UIStroke")
+pingStroke.Color = Color3.fromRGB(45, 45, 45)
+pingStroke.Thickness = 1
+pingStroke.Parent = pingFrame
+
+local pingLabel = Instance.new("TextLabel")
+pingLabel.Name = "PingText"
+pingLabel.Size = UDim2.fromScale(1, 1)
+pingLabel.BackgroundTransparency = 1
+pingLabel.Text = "Ping: 0ms"
+pingLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+pingLabel.TextSize = 12
+pingLabel.Font = Enum.Font.GothamBold
+pingLabel.Parent = pingFrame
+
+task.spawn(function()
+    while true do
+        pcall(function()
+            local ping = math.floor(player:GetNetworkPing() * 1000)
+            pingLabel.Text = "Ping: " .. tostring(ping) .. "ms"
+        end)
+        task.wait(1)
+    end
+end)
+
+-- MAKE FPS AND PING BOXES DRAGGABLE
+local function makeDraggable(frame)
+    local dragging = false
+    local dragStart, startPos
+
+    frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+end
+
+makeDraggable(fpsFrame)
+makeDraggable(pingFrame)
 
 -- OPEN/CLOSE POPUP HINT
 local hint = Instance.new("TextLabel")
@@ -97,7 +324,7 @@ hint.Font = Enum.Font.GothamBold
 hint.TextTransparency = 0
 hint.Parent = screenGui
 
-Instance.new("UICorner", hint).CornerRadius = UDim.new(0, 7)
+Instance.new("UICorner", hint).CornerRadius = UDim.new(0, 10)
 
 local hintStroke = Instance.new("UIStroke")
 hintStroke.Color = Color3.fromRGB(55, 55, 55)
@@ -117,7 +344,7 @@ main.Active = true
 main.ClipsDescendants = true
 main.Parent = screenGui
 
-Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 16)
 
 -- BLACK & WHITE SNAKE BACKGROUND IMAGE
 local bgImage = Instance.new("ImageLabel")
@@ -130,6 +357,8 @@ bgImage.ImageTransparency = 0.75
 bgImage.ScaleType = Enum.ScaleType.Crop
 bgImage.ZIndex = 0
 bgImage.Parent = main
+
+Instance.new("UICorner", bgImage).CornerRadius = UDim.new(0, 16)
 
 local uiScale = Instance.new("UIScale")
 uiScale.Scale = 0.85
@@ -144,6 +373,8 @@ titleBar.BorderSizePixel = 0
 titleBar.Active = true
 titleBar.ZIndex = 2
 titleBar.Parent = main
+
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 16)
 
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -55, 1, 0)
@@ -166,7 +397,7 @@ closeButton.TextSize = 16
 closeButton.Font = Enum.Font.GothamBold
 closeButton.BorderSizePixel = 0
 closeButton.Parent = titleBar
-Instance.new("UICorner", closeButton).CornerRadius = UDim.new(0, 6)
+Instance.new("UICorner", closeButton).CornerRadius = UDim.new(0, 8)
 
 -- WARNING POPUP GUI
 local warningModal = Instance.new("CanvasGroup")
@@ -189,7 +420,7 @@ modalBox.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
 modalBox.BorderSizePixel = 0
 modalBox.ZIndex = 11
 modalBox.Parent = warningModal
-Instance.new("UICorner", modalBox).CornerRadius = UDim.new(0, 8)
+Instance.new("UICorner", modalBox).CornerRadius = UDim.new(0, 14)
 
 local modalStroke = Instance.new("UIStroke")
 modalStroke.Color = Color3.fromRGB(200, 50, 50)
@@ -230,7 +461,7 @@ confirmBtn.Font = Enum.Font.GothamBold
 confirmBtn.BorderSizePixel = 0
 confirmBtn.ZIndex = 12
 confirmBtn.Parent = modalBox
-Instance.new("UICorner", confirmBtn).CornerRadius = UDim.new(0, 6)
+Instance.new("UICorner", confirmBtn).CornerRadius = UDim.new(0, 8)
 
 local cancelBtn = Instance.new("TextButton")
 cancelBtn.Size = UDim2.fromOffset(125, 34)
@@ -243,7 +474,7 @@ cancelBtn.Font = Enum.Font.GothamBold
 cancelBtn.BorderSizePixel = 0
 cancelBtn.ZIndex = 12
 cancelBtn.Parent = modalBox
-Instance.new("UICorner", cancelBtn).CornerRadius = UDim.new(0, 6)
+Instance.new("UICorner", cancelBtn).CornerRadius = UDim.new(0, 8)
 
 -- ANIMATED POP-UP MODAL FUNCTIONS
 local modalAnimating = false
@@ -295,6 +526,8 @@ local function destroyGUI()
     destroyed = true
 
     stopNoclip()
+    stopFly()
+    stopSpeedHack()
 
     for target in pairs(espObjects) do
         removeESP(target)
@@ -379,7 +612,7 @@ local function createTab(name, size, position)
     button.Font = Enum.Font.GothamBold
     button.BorderSizePixel = 0
     button.Parent = tabBar
-    Instance.new("UICorner", button).CornerRadius = UDim.new(0, 6)
+    Instance.new("UICorner", button).CornerRadius = UDim.new(0, 8)
     return button
 end
 
@@ -467,7 +700,7 @@ espButton.TextSize = 14
 espButton.Font = Enum.Font.GothamBold
 espButton.BorderSizePixel = 0
 espButton.Parent = espPage
-Instance.new("UICorner", espButton).CornerRadius = UDim.new(0, 7)
+Instance.new("UICorner", espButton).CornerRadius = UDim.new(0, 8)
 
 local desc = Instance.new("TextLabel")
 desc.Size = UDim2.new(1, 0, 0, 45)
@@ -527,12 +760,11 @@ local function addESP(target)
     end
 
     if settings.Names then
-        -- Compatible with R6 and R15
-        local targetPart = character:FindFirstChild("Head") or character:FindFirstChild("Torso") or character:FindFirstChild("HumanoidRootPart")
-        if targetPart then
+        local head = character:FindFirstChild("Head")
+        if head then
             local tag = Instance.new("BillboardGui")
             tag.Name = "ESPName"
-            tag.Adornee = targetPart
+            tag.Adornee = head
             tag.Size = UDim2.fromOffset(200, 32)
             tag.StudsOffset = Vector3.new(0, 2.5, 0)
             tag.AlwaysOnTop = true
@@ -592,7 +824,7 @@ local function createSetting(parent, name, detail, key, order, callback)
     button.BorderSizePixel = 0
     button.LayoutOrder = order
     button.Parent = parent
-    Instance.new("UICorner", button).CornerRadius = UDim.new(0, 6)
+    Instance.new("UICorner", button).CornerRadius = UDim.new(0, 8)
 
     local label = Instance.new("TextLabel")
     label.Size = UDim2.new(0.68, 0, 0, 22)
@@ -625,7 +857,7 @@ local function createSetting(parent, name, detail, key, order, callback)
     state.Font = Enum.Font.GothamBold
     state.BorderSizePixel = 0
     state.Parent = button
-    Instance.new("UICorner", state).CornerRadius = UDim.new(0, 5)
+    Instance.new("UICorner", state).CornerRadius = UDim.new(0, 6)
 
     local function update()
         state.Text = settings[key] and "ON" or "OFF"
@@ -649,6 +881,63 @@ local function createSetting(parent, name, detail, key, order, callback)
     update()
 end
 
+-- SPEED / VALUE INPUT SETTING CREATOR
+local function createSpeedInput(parent, name, detail, key, order, callback)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, -4, 0, 48)
+    frame.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+    frame.BackgroundTransparency = 0.2
+    frame.BorderSizePixel = 0
+    frame.LayoutOrder = order
+    frame.Parent = parent
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.60, 0, 0, 22)
+    label.Position = UDim2.fromOffset(10, 3)
+    label.BackgroundTransparency = 1
+    label.Text = name
+    label.TextColor3 = Color3.new(1, 1, 1)
+    label.TextSize = 13
+    label.Font = Enum.Font.GothamBold
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = frame
+
+    local sub = Instance.new("TextLabel")
+    sub.Size = UDim2.new(0.60, 0, 0, 16)
+    sub.Position = UDim2.fromOffset(10, 26)
+    sub.BackgroundTransparency = 1
+    sub.Text = detail
+    sub.TextColor3 = Color3.fromRGB(150, 150, 150)
+    sub.TextSize = 10
+    sub.Font = Enum.Font.Gotham
+    sub.TextXAlignment = Enum.TextXAlignment.Left
+    sub.Parent = frame
+
+    local textBox = Instance.new("TextBox")
+    textBox.Size = UDim2.fromOffset(75, 28)
+    textBox.Position = UDim2.new(1, -85, 0.5, -14)
+    textBox.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    textBox.TextColor3 = Color3.new(1, 1, 1)
+    textBox.TextSize = 12
+    textBox.Font = Enum.Font.GothamBold
+    textBox.Text = tostring(settings[key])
+    textBox.BorderSizePixel = 0
+    textBox.Parent = frame
+    Instance.new("UICorner", textBox).CornerRadius = UDim.new(0, 6)
+
+    textBox.FocusLost:Connect(function()
+        local val = tonumber(textBox.Text)
+        if val then
+            settings[key] = math.clamp(val, 1, 500)
+            textBox.Text = tostring(settings[key])
+        else
+            textBox.Text = tostring(settings[key])
+        end
+        if callback then callback(settings[key]) end
+    end)
+end
+
 -- CONFIG COLOR PICKER PRESETS
 local colors = {
     {Name = "White", Color = Color3.fromRGB(255, 255, 255)},
@@ -670,7 +959,7 @@ local function createColorPicker(name, detail, key, order)
     frame.BorderSizePixel = 0
     frame.LayoutOrder = order
     frame.Parent = configPage
-    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
 
     local label = Instance.new("TextLabel")
     label.Size = UDim2.new(0.68, 0, 0, 22)
@@ -715,7 +1004,7 @@ local function createColorPicker(name, detail, key, order)
         btn.Text = ""
         btn.BorderSizePixel = 0
         btn.Parent = colorContainer
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
 
         local stroke = Instance.new("UIStroke")
         stroke.Thickness = 2
@@ -739,11 +1028,35 @@ local function createColorPicker(name, detail, key, order)
 end
 
 -- POPULATE MOVEMENTS TAB
-createSetting(movementsPage, "Noclip", "Walk through walls and obstacles", "Noclip", 1, function(enabled)
+createSetting(movementsPage, "Noclip", "Walk through walls and obstacles (R6/R15)", "Noclip", 1, function(enabled)
     if enabled then
         startNoclip()
     else
         stopNoclip()
+    end
+end)
+
+createSetting(movementsPage, "Fly", "Fly freely through the air", "Fly", 2, function(enabled)
+    if enabled then
+        startFly()
+    else
+        stopFly()
+    end
+end)
+
+createSpeedInput(movementsPage, "Fly Speed", "Set movement velocity for flight", "FlySpeed", 3)
+
+createSetting(movementsPage, "WalkSpeed", "Increase character movement speed", "SpeedHack", 4, function(enabled)
+    if enabled then
+        startSpeedHack()
+    else
+        stopSpeedHack()
+    end
+end)
+
+createSpeedInput(movementsPage, "WalkSpeed Value", "Set walk speed value (Default: 16)", "WalkSpeed", 5, function()
+    if settings.SpeedHack then
+        updateWalkSpeed()
     end
 end)
 
@@ -824,23 +1137,22 @@ UserInputService.InputEnded:Connect(function(input)
     end
 end)
 
--- SMOOTH RESIZE HANDLE
+-- RESIZE HANDLE
 local resize = Instance.new("TextButton")
 resize.Name = "ResizeHandle"
-resize.Size = UDim2.fromOffset(22, 22)
+resize.Size = UDim2.fromOffset(24, 24)
 resize.AnchorPoint = Vector2.new(1, 1)
-resize.Position = UDim2.new(1, -4, 1, -4)
-resize.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-resize.BackgroundTransparency = 0.3
-resize.Text = "••"
-resize.TextColor3 = Color3.fromRGB(160, 160, 160)
-resize.TextSize = 10
-resize.Font = Enum.Font.GothamBold
+resize.Position = UDim2.new(1, 0, 1, 0)
+resize.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+resize.BackgroundTransparency = 0.5
+resize.Text = "◢"
+resize.TextColor3 = Color3.new(1, 1, 1)
+resize.TextSize = 14
 resize.BorderSizePixel = 0
 resize.ZIndex = 3
 resize.Parent = main
 
-Instance.new("UICorner", resize).CornerRadius = UDim.new(0, 6)
+Instance.new("UICorner", resize).CornerRadius = UDim.new(0, 8)
 
 local resizing = false
 local resizeStart
