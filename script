@@ -1,0 +1,887 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local oldGui = playerGui:FindFirstChild("MovableGui")
+if oldGui then oldGui:Destroy() end
+
+-- SETTINGS
+local settings = {
+    Enabled = false,
+    Names = true,
+    Highlights = true,
+    Fill = true,
+    Outline = true,
+    FillColor = Color3.fromRGB(255, 255, 255),
+    OutlineColor = Color3.fromRGB(255, 255, 255),
+    Noclip = false
+}
+
+local espObjects = {}
+local animating = false
+local isOpen = false
+local destroyed = false
+
+local OPEN_TIME = 0.28
+local CLOSE_TIME = 0.20
+
+local function tween(obj, duration, style, direction, props)
+    local info = TweenInfo.new(
+        duration,
+        style or Enum.EasingStyle.Quad,
+        direction or Enum.EasingDirection.Out
+    )
+    local tw = TweenService:Create(obj, info, props)
+    tw:Play()
+    return tw
+end
+
+-- R6 & R15 COMPATIBLE NOCLIP
+local NoclipConnection = nil
+
+local function startNoclip()
+    if NoclipConnection then NoclipConnection:Disconnect() end
+    
+    local function Nocl()
+        if settings.Noclip and player.Character then
+            for _, v in pairs(player.Character:GetDescendants()) do
+                if v:IsA('BasePart') and v.CanCollide then
+                    v.CanCollide = false
+                end
+            end
+        end
+    end
+    
+    NoclipConnection = RunService.Stepped:Connect(Nocl)
+end
+
+local function stopNoclip()
+    if NoclipConnection then 
+        NoclipConnection:Disconnect() 
+        NoclipConnection = nil
+    end
+    
+    if player.Character then
+        for _, v in pairs(player.Character:GetDescendants()) do
+            if v:IsA('BasePart') then
+                v.CanCollide = true
+            end
+        end
+    end
+end
+
+-- SCREEN GUI (ALWAYS ON TOP)
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "MovableGui"
+screenGui.ResetOnSpawn = false
+screenGui.DisplayOrder = 999999
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+screenGui.Parent = playerGui
+
+-- OPEN/CLOSE POPUP HINT
+local hint = Instance.new("TextLabel")
+hint.Name = "OpenCloseHint"
+hint.Size = UDim2.fromOffset(280, 32)
+hint.Position = UDim2.new(0.5, -140, 1, -50)
+hint.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+hint.BackgroundTransparency = 0.15
+hint.BorderSizePixel = 0
+hint.Text = "X / Alt to open and close the menu"
+hint.TextColor3 = Color3.new(1, 1, 1)
+hint.TextSize = 12
+hint.Font = Enum.Font.GothamBold
+hint.TextTransparency = 0
+hint.Parent = screenGui
+
+Instance.new("UICorner", hint).CornerRadius = UDim.new(0, 7)
+
+local hintStroke = Instance.new("UIStroke")
+hintStroke.Color = Color3.fromRGB(55, 55, 55)
+hintStroke.Thickness = 1
+hintStroke.Parent = hint
+
+-- MAIN WINDOW
+local main = Instance.new("CanvasGroup")
+main.Name = "MainFrame"
+main.Size = UDim2.fromOffset(440, 340)
+main.Position = UDim2.new(0.5, -220, 0.5, -170)
+main.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+main.BorderSizePixel = 0
+main.GroupTransparency = 1
+main.Visible = false
+main.Active = true
+main.ClipsDescendants = true
+main.Parent = screenGui
+
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
+
+-- BLACK & WHITE SNAKE BACKGROUND IMAGE
+local bgImage = Instance.new("ImageLabel")
+bgImage.Name = "SnakeBackground"
+bgImage.Size = UDim2.fromScale(1, 1)
+bgImage.Position = UDim2.fromScale(0, 0)
+bgImage.BackgroundTransparency = 1
+bgImage.Image = "rbxassetid://10741285496"
+bgImage.ImageTransparency = 0.75
+bgImage.ScaleType = Enum.ScaleType.Crop
+bgImage.ZIndex = 0
+bgImage.Parent = main
+
+local uiScale = Instance.new("UIScale")
+uiScale.Scale = 0.85
+uiScale.Parent = main
+
+-- TITLE BAR
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 38)
+titleBar.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
+titleBar.BackgroundTransparency = 0.2
+titleBar.BorderSizePixel = 0
+titleBar.Active = true
+titleBar.ZIndex = 2
+titleBar.Parent = main
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -55, 1, 0)
+title.Position = UDim2.fromOffset(12, 0)
+title.BackgroundTransparency = 1
+title.Text = "Onix Hub"
+title.TextColor3 = Color3.new(1, 1, 1)
+title.TextSize = 16
+title.Font = Enum.Font.GothamBold
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = titleBar
+
+local closeButton = Instance.new("TextButton")
+closeButton.Size = UDim2.fromOffset(34, 30)
+closeButton.Position = UDim2.new(1, -38, 0, 4)
+closeButton.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+closeButton.Text = "X"
+closeButton.TextColor3 = Color3.new(1, 1, 1)
+closeButton.TextSize = 16
+closeButton.Font = Enum.Font.GothamBold
+closeButton.BorderSizePixel = 0
+closeButton.Parent = titleBar
+Instance.new("UICorner", closeButton).CornerRadius = UDim.new(0, 6)
+
+-- WARNING POPUP GUI
+local warningModal = Instance.new("CanvasGroup")
+warningModal.Name = "WarningModal"
+warningModal.Size = UDim2.fromScale(1, 1)
+warningModal.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+warningModal.GroupTransparency = 1
+warningModal.Visible = false
+warningModal.ZIndex = 10
+warningModal.Parent = main
+
+local modalScale = Instance.new("UIScale")
+modalScale.Scale = 0.8
+modalScale.Parent = warningModal
+
+local modalBox = Instance.new("Frame")
+modalBox.Size = UDim2.fromOffset(320, 160)
+modalBox.Position = UDim2.new(0.5, -160, 0.5, -80)
+modalBox.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+modalBox.BorderSizePixel = 0
+modalBox.ZIndex = 11
+modalBox.Parent = warningModal
+Instance.new("UICorner", modalBox).CornerRadius = UDim.new(0, 8)
+
+local modalStroke = Instance.new("UIStroke")
+modalStroke.Color = Color3.fromRGB(200, 50, 50)
+modalStroke.Thickness = 1.5
+modalStroke.Parent = modalBox
+
+local warningTitle = Instance.new("TextLabel")
+warningTitle.Size = UDim2.new(1, 0, 0, 30)
+warningTitle.Position = UDim2.fromOffset(0, 10)
+warningTitle.BackgroundTransparency = 1
+warningTitle.Text = "⚠️ WARNING"
+warningTitle.TextColor3 = Color3.fromRGB(255, 60, 60)
+warningTitle.TextSize = 16
+warningTitle.Font = Enum.Font.GothamBold
+warningTitle.ZIndex = 12
+warningTitle.Parent = modalBox
+
+local warningDesc = Instance.new("TextLabel")
+warningDesc.Size = UDim2.new(1, -20, 0, 50)
+warningDesc.Position = UDim2.fromOffset(10, 40)
+warningDesc.BackgroundTransparency = 1
+warningDesc.Text = "Pressing 'X' will close your menu forever until next execution. Are you sure?"
+warningDesc.TextColor3 = Color3.fromRGB(220, 220, 220)
+warningDesc.TextSize = 12
+warningDesc.Font = Enum.Font.Gotham
+warningDesc.TextWrapped = true
+warningDesc.ZIndex = 12
+warningDesc.Parent = modalBox
+
+local confirmBtn = Instance.new("TextButton")
+confirmBtn.Size = UDim2.fromOffset(125, 34)
+confirmBtn.Position = UDim2.fromOffset(25, 105)
+confirmBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+confirmBtn.Text = "Yes, Destroy"
+confirmBtn.TextColor3 = Color3.new(1, 1, 1)
+confirmBtn.TextSize = 12
+confirmBtn.Font = Enum.Font.GothamBold
+confirmBtn.BorderSizePixel = 0
+confirmBtn.ZIndex = 12
+confirmBtn.Parent = modalBox
+Instance.new("UICorner", confirmBtn).CornerRadius = UDim.new(0, 6)
+
+local cancelBtn = Instance.new("TextButton")
+cancelBtn.Size = UDim2.fromOffset(125, 34)
+cancelBtn.Position = UDim2.fromOffset(170, 105)
+cancelBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+cancelBtn.Text = "Cancel"
+cancelBtn.TextColor3 = Color3.new(1, 1, 1)
+cancelBtn.TextSize = 12
+cancelBtn.Font = Enum.Font.GothamBold
+cancelBtn.BorderSizePixel = 0
+cancelBtn.ZIndex = 12
+cancelBtn.Parent = modalBox
+Instance.new("UICorner", cancelBtn).CornerRadius = UDim.new(0, 6)
+
+-- ANIMATED POP-UP MODAL FUNCTIONS
+local modalAnimating = false
+
+local function showModal()
+    if modalAnimating or warningModal.Visible then return end
+    modalAnimating = true
+    
+    warningModal.GroupTransparency = 1
+    modalScale.Scale = 0.8
+    warningModal.Visible = true
+
+    tween(warningModal, 0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, {GroupTransparency = 0})
+    local scaleTw = tween(modalScale, 0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out, {Scale = 1})
+    
+    scaleTw.Completed:Wait()
+    modalAnimating = false
+end
+
+local function hideModal()
+    if modalAnimating or not warningModal.Visible then return end
+    modalAnimating = true
+
+    tween(warningModal, 0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In, {GroupTransparency = 1})
+    local scaleTw = tween(modalScale, 0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In, {Scale = 0.8})
+
+    scaleTw.Completed:Wait()
+    warningModal.Visible = false
+    modalAnimating = false
+end
+
+-- ESP MANAGEMENT
+local function removeESP(target)
+    local objects = espObjects[target]
+    if objects then
+        if objects.highlight then
+            objects.highlight:Destroy()
+        end
+        if objects.nameTag then
+            objects.nameTag:Destroy()
+        end
+        espObjects[target] = nil
+    end
+end
+
+-- PERMANENT DESTROY FUNCTION
+local function destroyGUI()
+    if destroyed then return end
+    destroyed = true
+
+    stopNoclip()
+
+    for target in pairs(espObjects) do
+        removeESP(target)
+    end
+
+    tween(main, CLOSE_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.In, {GroupTransparency = 1})
+    local scaleTween = tween(uiScale, CLOSE_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.In, {Scale = 0.85})
+    scaleTween.Completed:Wait()
+
+    screenGui:Destroy()
+end
+
+closeButton.Activated:Connect(showModal)
+cancelBtn.Activated:Connect(hideModal)
+confirmBtn.Activated:Connect(destroyGUI)
+
+-- OPEN/CLOSE ANIMATIONS
+local function openGUI()
+    if animating or isOpen or destroyed then return end
+    animating = true
+    isOpen = true
+
+    main.Visible = true
+    main.GroupTransparency = 1
+    uiScale.Scale = 0.85
+
+    tween(main, OPEN_TIME, Enum.EasingStyle.Quad,
+        Enum.EasingDirection.Out, {GroupTransparency = 0})
+
+    local scaleTween = tween(uiScale, OPEN_TIME,
+        Enum.EasingStyle.Back, Enum.EasingDirection.Out,
+        {Scale = 1})
+
+    scaleTween.Completed:Wait()
+    animating = false
+end
+
+local function closeGUI()
+    if animating or not isOpen or destroyed then return end
+    animating = true
+    isOpen = false
+
+    tween(main, CLOSE_TIME, Enum.EasingStyle.Quad,
+        Enum.EasingDirection.In, {GroupTransparency = 1})
+
+    local scaleTween = tween(uiScale, CLOSE_TIME,
+        Enum.EasingStyle.Quad, Enum.EasingDirection.In,
+        {Scale = 0.85})
+
+    scaleTween.Completed:Wait()
+    main.Visible = false
+    animating = false
+end
+
+local function toggleGUI()
+    if animating or destroyed then return end
+    if isOpen then
+        task.spawn(closeGUI)
+    else
+        task.spawn(openGUI)
+    end
+end
+
+-- TABS
+local tabBar = Instance.new("Frame")
+tabBar.Size = UDim2.new(1, -20, 0, 36)
+tabBar.Position = UDim2.fromOffset(10, 46)
+tabBar.BackgroundTransparency = 1
+tabBar.ZIndex = 2
+tabBar.Parent = main
+
+local function createTab(name, size, position)
+    local button = Instance.new("TextButton")
+    button.Name = name .. "TabButton"
+    button.Size = size
+    button.Position = position
+    button.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    button.BackgroundTransparency = 0.2
+    button.Text = name
+    button.TextColor3 = Color3.new(1, 1, 1)
+    button.TextSize = 12
+    button.Font = Enum.Font.GothamBold
+    button.BorderSizePixel = 0
+    button.Parent = tabBar
+    Instance.new("UICorner", button).CornerRadius = UDim.new(0, 6)
+    return button
+end
+
+local espTab = createTab("ESP", UDim2.new(0.33, -4, 1, 0), UDim2.new(0, 0, 0, 0))
+local movementsTab = createTab("Movements", UDim2.new(0.33, -4, 1, 0), UDim2.new(0.33, 2, 0, 0))
+local configTab = createTab("Config", UDim2.new(0.34, -4, 1, 0), UDim2.new(0.66, 4, 0, 0))
+
+local espPage = Instance.new("Frame")
+espPage.Size = UDim2.new(1, -20, 1, -100)
+espPage.Position = UDim2.fromOffset(10, 90)
+espPage.BackgroundTransparency = 1
+espPage.ZIndex = 2
+espPage.Parent = main
+
+local movementsPage = Instance.new("ScrollingFrame")
+movementsPage.Size = UDim2.new(1, -20, 1, -100)
+movementsPage.Position = UDim2.fromOffset(10, 90)
+movementsPage.BackgroundTransparency = 1
+movementsPage.BorderSizePixel = 0
+movementsPage.ScrollBarThickness = 4
+movementsPage.ScrollBarImageColor3 = Color3.fromRGB(100, 100, 100)
+movementsPage.CanvasSize = UDim2.new(0, 0, 0, 0)
+movementsPage.Visible = false
+movementsPage.ZIndex = 2
+movementsPage.Parent = main
+
+local configPage = Instance.new("ScrollingFrame")
+configPage.Size = UDim2.new(1, -20, 1, -100)
+configPage.Position = UDim2.fromOffset(10, 90)
+configPage.BackgroundTransparency = 1
+configPage.BorderSizePixel = 0
+configPage.ScrollBarThickness = 4
+configPage.ScrollBarImageColor3 = Color3.fromRGB(100, 100, 100)
+configPage.CanvasSize = UDim2.new(0, 0, 0, 0)
+configPage.Visible = false
+configPage.ZIndex = 2
+configPage.Parent = main
+
+local movementsLayout = Instance.new("UIListLayout")
+movementsLayout.Padding = UDim.new(0, 8)
+movementsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+movementsLayout.Parent = movementsPage
+
+local layout = Instance.new("UIListLayout")
+layout.Padding = UDim.new(0, 8)
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Parent = configPage
+
+local function selectTab(name)
+    espPage.Visible = name == "ESP"
+    movementsPage.Visible = name == "Movements"
+    configPage.Visible = name == "Config"
+
+    tween(espTab, 0.15, nil, nil, {
+        BackgroundColor3 = name == "ESP"
+            and Color3.fromRGB(50, 50, 50)
+            or Color3.fromRGB(15, 15, 15)
+    })
+    tween(movementsTab, 0.15, nil, nil, {
+        BackgroundColor3 = name == "Movements"
+            and Color3.fromRGB(50, 50, 50)
+            or Color3.fromRGB(15, 15, 15)
+    })
+    tween(configTab, 0.15, nil, nil, {
+        BackgroundColor3 = name == "Config"
+            and Color3.fromRGB(50, 50, 50)
+            or Color3.fromRGB(15, 15, 15)
+    })
+end
+
+espTab.Activated:Connect(function() selectTab("ESP") end)
+movementsTab.Activated:Connect(function() selectTab("Movements") end)
+configTab.Activated:Connect(function() selectTab("Config") end)
+
+selectTab("ESP")
+
+-- ESP MAIN TOGGLE
+local espButton = Instance.new("TextButton")
+espButton.Size = UDim2.new(1, 0, 0, 42)
+espButton.Position = UDim2.fromOffset(0, 5)
+espButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+espButton.BackgroundTransparency = 0.2
+espButton.TextColor3 = Color3.new(1, 1, 1)
+espButton.TextSize = 14
+espButton.Font = Enum.Font.GothamBold
+espButton.BorderSizePixel = 0
+espButton.Parent = espPage
+Instance.new("UICorner", espButton).CornerRadius = UDim.new(0, 7)
+
+local desc = Instance.new("TextLabel")
+desc.Size = UDim2.new(1, 0, 0, 45)
+desc.Position = UDim2.fromOffset(0, 55)
+desc.BackgroundTransparency = 1
+desc.Text = "Toggle player ESP here.\nCustomize its appearance in Config."
+desc.TextColor3 = Color3.fromRGB(180, 180, 180)
+desc.TextSize = 13
+desc.Font = Enum.Font.Gotham
+desc.TextWrapped = true
+desc.Parent = espPage
+
+local function addESP(target)
+    if not settings.Enabled or target == player or destroyed then return end
+
+    local character = target.Character
+    if not character then
+        removeESP(target)
+        return
+    end
+
+    local current = espObjects[target]
+    if current and current.character == character then
+        if current.highlight then
+            current.highlight.Enabled = settings.Highlights
+            current.highlight.FillTransparency = settings.Fill and 0.5 or 1
+            current.highlight.OutlineTransparency = settings.Outline and 0 or 1
+            current.highlight.FillColor = settings.FillColor
+            current.highlight.OutlineColor = settings.OutlineColor
+        end
+        if current.nameTag then
+            current.nameTag.Enabled = settings.Names
+        end
+        if (settings.Names and not current.nameTag)
+            or (settings.Highlights and not current.highlight) then
+            removeESP(target)
+        else
+            return
+        end
+    end
+
+    removeESP(target)
+
+    local objects = {character = character}
+
+    if settings.Highlights then
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "PlayerESP"
+        highlight.Adornee = character
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.FillColor = settings.FillColor
+        highlight.OutlineColor = settings.OutlineColor
+        highlight.FillTransparency = settings.Fill and 0.5 or 1
+        highlight.OutlineTransparency = settings.Outline and 0 or 1
+        highlight.Parent = screenGui
+        objects.highlight = highlight
+    end
+
+    if settings.Names then
+        -- Compatible with R6 and R15
+        local targetPart = character:FindFirstChild("Head") or character:FindFirstChild("Torso") or character:FindFirstChild("HumanoidRootPart")
+        if targetPart then
+            local tag = Instance.new("BillboardGui")
+            tag.Name = "ESPName"
+            tag.Adornee = targetPart
+            tag.Size = UDim2.fromOffset(200, 32)
+            tag.StudsOffset = Vector3.new(0, 2.5, 0)
+            tag.AlwaysOnTop = true
+            tag.Parent = screenGui
+
+            local label = Instance.new("TextLabel")
+            label.Size = UDim2.fromScale(1, 1)
+            label.BackgroundTransparency = 1
+            label.Text = target.DisplayName .. " (@" .. target.Name .. ")"
+            label.TextColor3 = Color3.new(1, 1, 1)
+            label.TextStrokeColor3 = Color3.new(0, 0, 0)
+            label.TextStrokeTransparency = 0
+            label.TextScaled = true
+            label.Font = Enum.Font.GothamBold
+            label.Parent = tag
+
+            objects.nameTag = tag
+        end
+    end
+
+    espObjects[target] = objects
+end
+
+local function refreshESP()
+    espButton.Text = settings.Enabled and "PLAYER ESP: ON" or "PLAYER ESP: OFF"
+
+    tween(espButton, 0.15, nil, nil, {
+        BackgroundColor3 = settings.Enabled
+            and Color3.fromRGB(0, 150, 70)
+            or Color3.fromRGB(20, 20, 20)
+    })
+
+    for _, target in Players:GetPlayers() do
+        if target ~= player then
+            if settings.Enabled then
+                addESP(target)
+            else
+                removeESP(target)
+            end
+        end
+    end
+end
+
+espButton.Activated:Connect(function()
+    settings.Enabled = not settings.Enabled
+    refreshESP()
+end)
+
+-- GENERIC TOGGLE CREATOR
+local function createSetting(parent, name, detail, key, order, callback)
+    local button = Instance.new("TextButton")
+    button.Name = key .. "Toggle"
+    button.Size = UDim2.new(1, -4, 0, 48)
+    button.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+    button.BackgroundTransparency = 0.2
+    button.Text = ""
+    button.BorderSizePixel = 0
+    button.LayoutOrder = order
+    button.Parent = parent
+    Instance.new("UICorner", button).CornerRadius = UDim.new(0, 6)
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.68, 0, 0, 22)
+    label.Position = UDim2.fromOffset(10, 3)
+    label.BackgroundTransparency = 1
+    label.Text = name
+    label.TextColor3 = Color3.new(1, 1, 1)
+    label.TextSize = 13
+    label.Font = Enum.Font.GothamBold
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = button
+
+    local sub = Instance.new("TextLabel")
+    sub.Size = UDim2.new(0.72, 0, 0, 16)
+    sub.Position = UDim2.fromOffset(10, 26)
+    sub.BackgroundTransparency = 1
+    sub.Text = detail
+    sub.TextColor3 = Color3.fromRGB(150, 150, 150)
+    sub.TextSize = 10
+    sub.Font = Enum.Font.Gotham
+    sub.TextXAlignment = Enum.TextXAlignment.Left
+    sub.Parent = button
+
+    local state = Instance.new("TextLabel")
+    state.Size = UDim2.fromOffset(65, 28)
+    state.Position = UDim2.new(1, -75, 0.5, -14)
+    state.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    state.TextColor3 = Color3.new(1, 1, 1)
+    state.TextSize = 11
+    state.Font = Enum.Font.GothamBold
+    state.BorderSizePixel = 0
+    state.Parent = button
+    Instance.new("UICorner", state).CornerRadius = UDim.new(0, 5)
+
+    local function update()
+        state.Text = settings[key] and "ON" or "OFF"
+        tween(state, 0.15, nil, nil, {
+            BackgroundColor3 = settings[key]
+                and Color3.fromRGB(0, 150, 70)
+                or Color3.fromRGB(35, 35, 35)
+        })
+    end
+
+    button.Activated:Connect(function()
+        settings[key] = not settings[key]
+        update()
+        if callback then
+            callback(settings[key])
+        else
+            refreshESP()
+        end
+    end)
+
+    update()
+end
+
+-- CONFIG COLOR PICKER PRESETS
+local colors = {
+    {Name = "White", Color = Color3.fromRGB(255, 255, 255)},
+    {Name = "Red", Color = Color3.fromRGB(255, 50, 50)},
+    {Name = "Green", Color = Color3.fromRGB(50, 255, 50)},
+    {Name = "Blue", Color = Color3.fromRGB(50, 150, 255)},
+    {Name = "Yellow", Color = Color3.fromRGB(255, 255, 50)},
+    {Name = "Purple", Color = Color3.fromRGB(180, 50, 255)},
+    {Name = "Cyan", Color = Color3.fromRGB(50, 255, 255)},
+    {Name = "Orange", Color = Color3.fromRGB(255, 128, 0)},
+    {Name = "Pink", Color = Color3.fromRGB(255, 105, 180)}
+}
+
+local function createColorPicker(name, detail, key, order)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, -4, 0, 68)
+    frame.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+    frame.BackgroundTransparency = 0.2
+    frame.BorderSizePixel = 0
+    frame.LayoutOrder = order
+    frame.Parent = configPage
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.68, 0, 0, 22)
+    label.Position = UDim2.fromOffset(10, 4)
+    label.BackgroundTransparency = 1
+    label.Text = name
+    label.TextColor3 = Color3.new(1, 1, 1)
+    label.TextSize = 13
+    label.Font = Enum.Font.GothamBold
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = frame
+
+    local sub = Instance.new("TextLabel")
+    sub.Size = UDim2.new(0.72, 0, 0, 16)
+    sub.Position = UDim2.fromOffset(10, 24)
+    sub.BackgroundTransparency = 1
+    sub.Text = detail
+    sub.TextColor3 = Color3.fromRGB(150, 150, 150)
+    sub.TextSize = 10
+    sub.Font = Enum.Font.Gotham
+    sub.TextXAlignment = Enum.TextXAlignment.Left
+    sub.Parent = frame
+
+    local colorContainer = Instance.new("ScrollingFrame")
+    colorContainer.Size = UDim2.new(1, -20, 0, 26)
+    colorContainer.Position = UDim2.fromOffset(10, 40)
+    colorContainer.BackgroundTransparency = 1
+    colorContainer.BorderSizePixel = 0
+    colorContainer.CanvasSize = UDim2.new(0, (#colors * 34) - 4, 0, 0)
+    colorContainer.ScrollBarThickness = 0
+    colorContainer.Parent = frame
+
+    local uiList = Instance.new("UIListLayout")
+    uiList.FillDirection = Enum.FillDirection.Horizontal
+    uiList.Padding = UDim.new(0, 8)
+    uiList.Parent = colorContainer
+
+    for _, colorData in ipairs(colors) do
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.fromOffset(26, 26)
+        btn.BackgroundColor3 = colorData.Color
+        btn.Text = ""
+        btn.BorderSizePixel = 0
+        btn.Parent = colorContainer
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Thickness = 2
+        stroke.Color = Color3.fromRGB(255, 255, 255)
+        stroke.Transparency = (settings[key] == colorData.Color) and 0 or 1
+        stroke.Parent = btn
+
+        btn.Activated:Connect(function()
+            settings[key] = colorData.Color
+            for _, child in ipairs(colorContainer:GetChildren()) do
+                if child:IsA("TextButton") then
+                    local s = child:FindFirstChildOfClass("UIStroke")
+                    if s then
+                        s.Transparency = (child.BackgroundColor3 == colorData.Color) and 0 or 1
+                    end
+                end
+            end
+            refreshESP()
+        end)
+    end
+end
+
+-- POPULATE MOVEMENTS TAB
+createSetting(movementsPage, "Noclip", "Walk through walls and obstacles", "Noclip", 1, function(enabled)
+    if enabled then
+        startNoclip()
+    else
+        stopNoclip()
+    end
+end)
+
+-- POPULATE CONFIG TAB
+createSetting(configPage, "Player Names", "Show names above players", "Names", 1)
+createSetting(configPage, "Player Highlight", "Highlight characters through walls", "Highlights", 2)
+createSetting(configPage, "Highlight Fill", "Show the inside of highlights", "Fill", 3)
+createSetting(configPage, "Highlight Outline", "Show the outline of highlights", "Outline", 4)
+createColorPicker("Fill Color", "Choose highlight fill color", "FillColor", 5)
+createColorPicker("Outline Color", "Choose highlight outline color", "OutlineColor", 6)
+
+movementsLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    movementsPage.CanvasSize = UDim2.new(0, 0, 0, movementsLayout.AbsoluteContentSize.Y + 8)
+end)
+
+layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    configPage.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 8)
+end)
+
+-- PLAYER JOIN / RESPAWN
+local function trackPlayer(target)
+    if target == player then return end
+
+    target.CharacterAdded:Connect(function()
+        task.wait(0.5)
+        if settings.Enabled and not destroyed then
+            addESP(target)
+        end
+    end)
+
+    target.CharacterRemoving:Connect(function()
+        removeESP(target)
+    end)
+
+    if settings.Enabled and not destroyed then
+        addESP(target)
+    end
+end
+
+for _, target in Players:GetPlayers() do
+    trackPlayer(target)
+end
+
+Players.PlayerAdded:Connect(trackPlayer)
+Players.PlayerRemoving:Connect(removeESP)
+
+-- DRAG WINDOW
+local dragging = false
+local dragStart
+local startPosition
+
+titleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPosition = main.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (
+        input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch
+    ) then
+        local delta = input.Position - dragStart
+        main.Position = UDim2.new(
+            startPosition.X.Scale, startPosition.X.Offset + delta.X,
+            startPosition.Y.Scale, startPosition.Y.Offset + delta.Y
+        )
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+-- SMOOTH RESIZE HANDLE
+local resize = Instance.new("TextButton")
+resize.Name = "ResizeHandle"
+resize.Size = UDim2.fromOffset(22, 22)
+resize.AnchorPoint = Vector2.new(1, 1)
+resize.Position = UDim2.new(1, -4, 1, -4)
+resize.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+resize.BackgroundTransparency = 0.3
+resize.Text = "••"
+resize.TextColor3 = Color3.fromRGB(160, 160, 160)
+resize.TextSize = 10
+resize.Font = Enum.Font.GothamBold
+resize.BorderSizePixel = 0
+resize.ZIndex = 3
+resize.Parent = main
+
+Instance.new("UICorner", resize).CornerRadius = UDim.new(0, 6)
+
+local resizing = false
+local resizeStart
+local startSize
+
+resize.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        resizing = true
+        resizeStart = input.Position
+        startSize = main.Size
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if resizing and (
+        input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch
+    ) then
+        local delta = input.Position - resizeStart
+        main.Size = UDim2.fromOffset(
+            math.clamp(startSize.X.Offset + delta.X, 250, 800),
+            math.clamp(startSize.Y.Offset + delta.Y, 180, 600)
+        )
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        resizing = false
+    end
+end)
+
+-- TOGGLE WITH X / ALT KEYS
+UserInputService.InputBegan:Connect(function(input, processed)
+    if processed or destroyed then return end
+
+    if input.KeyCode == Enum.KeyCode.LeftAlt
+        or input.KeyCode == Enum.KeyCode.RightAlt
+        or input.KeyCode == Enum.KeyCode.X then
+        toggleGUI()
+    end
+end)
